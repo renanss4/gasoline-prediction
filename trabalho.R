@@ -1,11 +1,17 @@
 # Carregar pacotes necessários
-library(readr)        # Leitura de arquivos
+library(readr)        # Leitura de arquivos 
 library(dplyr)        # Manipulação de dados
 library(stringr)      # Manipulação de strings
-library(ggcorrplot)     # Visualização de correlações
-library(tidyverse)
-library(forecast)
-library(lubridate)
+library(ggcorrplot)   # Visualização de correlações
+library(tidyverse)    # Conjunto de pacotes para ciência de dados
+library(forecast)     # Modelagem de séries temporais 
+library(lubridate)    # Manipulação de datas
+
+# 0. OBJETIVO DA ANÁLISE
+# O objetivo da análise das séries temporais de cada região é entender como a
+# média ponderada do preço de revenda aumentou ao longo do tempo. A análise pode
+# ser filtrada por região e por produto. Para esta primeira análise, decidimos
+# considerar todas as regiões e utilizar a gasolina comum como produto..
 
 # 1. LEITURA E PREPARAÇÃO DOS DADOS
 
@@ -18,18 +24,16 @@ colnames(dataset) <- colnames(dataset) %>%
   stringi::stri_trans_general("Latin-ASCII")
 
 # Seleção e agregação inicial dos dados
-# nosso objetivo é interpretar como a média do preço de revenda foi mudando seu
-# valor ao longo do tempo, para cada região e para determinados produtos. 
-# É possível filtrar o produto, iremos verificar a GASOLINA COMUM
 base <- dataset %>%
   select(DATA_INICIAL, REGIAO, PRODUTO, NUMERO_DE_POSTOS_PESQUISADOS, PRECO_MEDIO_REVENDA) %>%
   mutate(DATA_INICIAL = as.Date(DATA_INICIAL, format = "%Y-%m-%d"))
 
 # Cálculo do preço médio ponderado
-# isso pq a variavel PRECO_MEDIO_REVENDA já é uma média com base na variável de
-# NUMERO_DE_POSTOS_PESQUISADOS, então buscamos a média ponderada do preço médio
-# de revenda, utilizando como peso o número de postos pesquisados, e fazendo um
-# agrupamento por data, região e produto
+# Criamos uma base contendo o cálculo da média ponderada do preço médio de
+# revenda. A variável PRECO_MEDIO_REVENDA já representa uma média com base no
+# NUMERO_DE_POSTOS_PESQUISADOS. Utilizamos esse valor como peso para calcular a
+# média ponderada do preço médio de revenda, e também realizamos o agrupamento
+# por data, região e produto.
 base_ponderada <- base %>%
   group_by(DATA_INICIAL, REGIAO, PRODUTO) %>%
   summarise(
@@ -52,7 +56,6 @@ filtrar_dados <- function(base, regiao = NULL, produto = NULL) {
   
   return(base)
 }
-
 
 # Filtrar dados para região e gasolina comum
 baseCO_GC <- filtrar_dados(base_ponderada, "CENTRO OESTE", "GASOLINA COMUM")
@@ -100,27 +103,45 @@ separar_treino_teste <- function(series, n_treino) {
   list(treino = treino, teste = teste)
 }
 
+# Função para separar treino e teste 
+separar_treino_teste <- function(series, n_treino = NULL) {
+  if (!is.null(n_treino)) {
+    # Caso seja passado n_treino, usamos a lógica genérica
+    n_total <- nrow(series)
+    treino <- series[1:n_treino, ]
+    teste <- series[(n_treino + 1):n_total, ]
+  } else {
+    # Caso não seja passado n_treino, usamos a separação fixa
+    treino <- series[1:180, ]
+    teste <- series[181:192, ] # Desconsidera os dados de 2020 e 2021
+  }
+  list(treino = treino, teste = teste)
+}
+
 # Separando conjuntos para cada região
-conjuntos_CO <- separar_treino_teste(baseCO_GC_mensal, 191)
+# Estamos desconsiderando os anos de 2020 e 2021. O ano de 2021 foi excluído
+# devido à insuficiência de dados, com apenas 4 meses registrados. Já o ano de
+# 2020 foi desconsiderado devido ao impacto da pandemia, que aumentou a
+# sazonalidade da série temporal.
+conjuntos_CO <- separar_treino_teste(baseCO_GC_mensal)
 treino_CO <- conjuntos_CO$treino
 teste_CO <- conjuntos_CO$teste
 
-conjuntos_N <- separar_treino_teste(baseN_GC_mensal, 191)
+conjuntos_N <- separar_treino_teste(baseN_GC_mensal)
 treino_N <- conjuntos_N$treino
 teste_N <- conjuntos_N$teste
 
-conjuntos_NE <- separar_treino_teste(baseNE_GC_mensal, 191)
+conjuntos_NE <- separar_treino_teste(baseNE_GC_mensal)
 treino_NE <- conjuntos_NE$treino
 teste_NE <- conjuntos_NE$teste
 
-conjuntos_S <- separar_treino_teste(baseS_GC_mensal, 191)
+conjuntos_S <- separar_treino_teste(baseS_GC_mensal)
 treino_S <- conjuntos_S$treino
 teste_S <- conjuntos_S$teste
 
-conjuntos_SE <- separar_treino_teste(baseSE_GC_mensal, 191)
+conjuntos_SE <- separar_treino_teste(baseSE_GC_mensal)
 treino_SE <- conjuntos_SE$treino
 teste_SE <- conjuntos_SE$teste
-
 
 # Criando a base temporal de cada região e visualizando
 baseCO_ts = ts(treino_CO$media_ponderada_preco, frequency=12, start=c(2004,1))
@@ -138,9 +159,7 @@ plot(baseS_ts, type="s")
 baseSE_ts = ts(treino_SE$media_ponderada_preco, frequency=12, start=c(2004,1))
 plot(baseSE_ts, type="s")
 
-# Suavizações Exponenciais para os modelos SIMPLES, HOLT E HW_ad,
-# Utilizamos o modelo aditivo ao invés do multiplicativo por conta da amplitude
-# da série temporal não varia significativamente com o tempo
+# Suavizações Exponenciais para os modelos SIMPLES, HOLT, HW_ad e HW_mult
 # SIMPLES
 SES_CO = ses(baseCO_ts, h = 12)
 SES_N = ses(baseN_ts, h = 12)
@@ -162,59 +181,72 @@ HW_ad_NE = hw(baseNE_ts, seasonal = "additive", h = 12)
 HW_ad_S = hw(baseS_ts, seasonal = "additive", h = 12)
 HW_ad_SE = hw(baseSE_ts, seasonal = "additive", h = 12)
 
+# HOLT-WINTER MULTIPLICATIVE
+HW_mult_CO <- hw(baseCO_ts, seasonal = "multiplicative", h = 15)
+HW_mult_N <- hw(baseN_ts, seasonal = "multiplicative", h = 12)
+HW_mult_NE <- hw(baseNE_ts, seasonal = "multiplicative", h = 12)
+HW_mult_S <- hw(baseS_ts, seasonal = "multiplicative", h = 12)
+HW_mult_SE <- hw(baseSE_ts, seasonal = "multiplicative", h = 12)
+
 # COMPARACAO GERAL
-list(SES_CO, HOLT_CO, HW_ad_CO) %>% map(accuracy)
-list(SES_N, HOLT_N, HW_ad_N) %>% map(accuracy)
-list(SES_NE, HOLT_NE, HW_ad_NE) %>% map(accuracy)
-list(SES_S, HOLT_S, HW_ad_S) %>% map(accuracy)
-list(SES_SE, HOLT_SE, HW_ad_SE) %>% map(accuracy)
+list(SES_CO, HOLT_CO, HW_ad_CO, HW_mult_CO) %>% map(accuracy)
+list(SES_N, HOLT_N, HW_ad_N, HW_mult_N) %>% map(accuracy)
+list(SES_NE, HOLT_NE, HW_ad_NE, HW_mult_NE) %>% map(accuracy)
+list(SES_S, HOLT_S, HW_ad_S, HW_mult_S) %>% map(accuracy)
+list(SES_SE, HOLT_SE, HW_ad_SE, HW_mult_SE) %>% map(accuracy)
 
 # Resumo Geral
-# O RMSE (Root Mean Squared Error) é uma métrica que mede o erro entre os
-# valores previstos e os observados. Para cada região, escolhemos o modelo com
-# o menor RMSE, pois isso indica melhor desempenho preditivo.
-# Região - Melhor Modelo - RMSE (métrica utilizada para escolha do modelo)
-# CO - SES_CO - 0.0646
-# N - SES_N - 0.0594
-# NE - HOLT_NE - 0.0609
-# S - SES_S - 0.0657
-# SE - HOLT_SE - 0.0571
+# O RMSE (Root Mean Squared Error) é uma métrica que avalia a diferença entre os
+# valores previstos e observados. Para cada região, escolhemos o modelo com o
+# menor RMSE, pois isso indica o melhor desempenho preditivo. No entanto, as
+# séries que inicialmente não apresentavam muita sazonalidade começam a exibir
+# esse padrão a partir de 2019.
+
+# 1. Região CO: Melhor modelo = HOLT_CO, RMSE = 0.06248424
+# 2. Região N: Melhor modelo = HOLT_N, RMSE = 0.05794965
+# 3. Região NE: Melhor modelo = HOLT_NE, RMSE = 0.05860728
+# 4. Região S: Melhor modelo = HOLT_S, RMSE = 0.06218726
+# 5. Região SE: Melhor modelo = HOLT_SE, RMSE = 0.05440955
+
+# O modelo que apresentou o melhor desempenho em todas as regiões foi o HOLT
+# (Holt's Linear Trend Model), com o menor RMSE na Região SE (RMSE = 0.05440955).
+# Portanto, o modelo HOLT é a melhor escolha para as previsões nessas regiões.
 
 # Testando as pipelines
-SES_CO.predito = summary(SES_CO, h=12)
-# SES_CO.predito
-previsao_CO = cbind(SES_CO.predito$mean, SES_CO.predito$lower, SES_CO.predito$upper)
+HOLT_CO.predito = summary(HOLT_CO, h=12)
+HOLT_CO.predito
+previsao_CO = cbind(HOLT_CO.predito$mean, HOLT_CO.predito$lower, HOLT_CO.predito$upper)
 previsao_CO = as.data.frame(previsao_CO[c(1:12),c(1,3,5)])
 colnames(previsao_CO) = c("Previsao","LI","LS")
 teste_CO = cbind(teste_CO, previsao_CO)
 teste_CO$Periodo = seq(1:12)
 
-SES_N.predito = summary(SES_N, h=12)
-# SES_N.predito
-previsao_N = cbind(SES_N.predito$mean, SES_N.predito$lower, SES_N.predito$upper)
+HOLT_N.predito = summary(HOLT_N, h=12)
+HOLT_N.predito
+previsao_N = cbind(HOLT_N.predito$mean, HOLT_N.predito$lower, HOLT_N.predito$upper)
 previsao_N = as.data.frame(previsao_N[c(1:12),c(1,3,5)])
 colnames(previsao_N) = c("Previsao","LI","LS")
 teste_N = cbind(teste_N, previsao_N)
 teste_N$Periodo = seq(1:12)
 
 HOLT_NE.predito = summary(HOLT_NE, h=12)
-# HOLT_NE.predito
+HOLT_NE.predito
 previsao_NE = cbind(HOLT_NE.predito$mean, HOLT_NE.predito$lower, HOLT_NE.predito$upper)
 previsao_NE = as.data.frame(previsao_NE[c(1:12),c(1,3,5)])
 colnames(previsao_NE) = c("Previsao","LI","LS")
 teste_NE = cbind(teste_NE, previsao_NE)
 teste_NE$Periodo = seq(1:12)
 
-SES_S.predito = summary(SES_S, h=12)
-# SES_S.predito
-previsao_S = cbind(SES_S.predito$mean, SES_S.predito$lower, SES_S.predito$upper)
+HOLT_S.predito = summary(HOLT_S, h=12)
+HOLT_S.predito
+previsao_S = cbind(HOLT_S.predito$mean, HOLT_S.predito$lower, HOLT_S.predito$upper)
 previsao_S = as.data.frame(previsao_S[c(1:12),c(1,3,5)])
 colnames(previsao_S) = c("Previsao","LI","LS")
 teste_S = cbind(teste_S, previsao_S)
 teste_S$Periodo = seq(1:12)
 
 HOLT_SE.predito = summary(HOLT_SE, h=12)
-# HOLT_SE.predito
+HOLT_SE.predito
 previsao_SE = cbind(HOLT_SE.predito$mean, HOLT_SE.predito$lower, HOLT_SE.predito$upper)
 previsao_SE = as.data.frame(previsao_SE[c(1:12),c(1,3,5)])
 colnames(previsao_SE) = c("Previsao","LI","LS")
@@ -276,4 +308,46 @@ lines(teste_SE$Periodo, teste_SE$media_ponderada_preco, col = "black", lwd = 2)
 lines(teste_SE$Periodo, teste_SE$Previsao, col = "red", lwd = 2)
 lines(teste_SE$Periodo, teste_SE$LI, col = "red", lwd = 2, lty = 'dashed')
 lines(teste_SE$Periodo, teste_SE$LS, col = "red", lwd = 2, lty = 'dashed')
-  
+
+# 6. CONCLUSÃO
+# Com base nos gráficos, observa-se que o modelo ajustado escolhido está
+# conseguindo capturar de forma precisa a tendência dos dados reais durante o
+# período de previsão (maio de 2019 a abril de 2020). Os intervalos de
+# confiança, representados pelas linhas vermelhas tracejadas, demonstram
+# consistência e largura adequada, indicando boa confiabilidade nas previsões.
+# No entanto, é importante notar que, à medida que o período de previsão se
+# estende, o intervalo de confiança se amplia, sugerindo que a confiabilidade
+# diminui para períodos mais distantes.
+
+# O modelo parece capturar bem a tendência crescente observada nos dados reais.
+# Em alguns pontos, há pequenas discrepâncias entre os valores reais e a
+# previsão, mas nada muito significativo.
+
+# O intervalo de confiança acompanha a previsão sem ser excessivamente amplo,
+# o que reforça a confiabilidade do modelo. Quase todos os dados reais estão
+# dentro desse intervalo, o que é um bom indicativo de adequação do modelo.
+# Reforço que os anos de 2020 e 2021 foram parcialmente desconsiderados. 
+
+# 7. EXTRA - GRÁFICO UTILIZANDO O MODELO HOLT PARA CADA REGIÃO
+# Apenas para visualizar as futuras tendencias
+
+autoplot(HOLT_CO) + 
+  autolayer(baseCO_ts, series = "Dados Reais") +
+  ggtitle("Holt-Winters Aditivo (Região CO)")
+
+autoplot(HOLT_N) + 
+  autolayer(baseN_ts, series = "Dados Reais") +
+  ggtitle("Holt-Winters Aditivo (Região N)")
+
+autoplot(HOLT_NE) + 
+  autolayer(baseNE_ts, series = "Dados Reais") +
+  ggtitle("Holt-Winters Aditivo (Região NE)")
+
+autoplot(HOLT_S) + 
+  autolayer(baseS_ts, series = "Dados Reais") +
+  ggtitle("Holt-Winters Aditivo (Região S)")
+
+autoplot(HOLT_SE) + 
+  autolayer(baseSE_ts, series = "Dados Reais") +
+  ggtitle("Holt-Winters Aditivo (Região SE)")
+
